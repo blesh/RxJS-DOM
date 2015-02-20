@@ -6,6 +6,7 @@
     return function (element) {
       trash.appendChild(element);
       trash.innerHTML = '';
+      trash = null;
     };
   })();
 
@@ -17,9 +18,12 @@
     return function(options) {
       return new AnonymousObservable(function(observer) {
 
+        var callbackId = 'callback_' + (id++).toString(36); 
+
         var settings = {
           jsonp: 'JSONPCallback',
           async: true,
+          jsonpCallback: 'Rx.DOM._jsonpCallbacks.' + callbackId
         };
 
         if(typeof options === 'string') {
@@ -32,11 +36,10 @@
           }
         }
 
-        var callbackId = 'callback_' + (id++).toString(36); 
         var script = document.createElement('script');
         script.type = 'text/javascript';
         script.async = settings.async;
-        script.src = settings.url.replace(settings.jsonp, 'Rx.DOM._jsonpCallbacks.' + callbackId);
+        script.src = settings.url.replace(settings.jsonp, settings.jsonpCallback);
 
         dom._jsonpCallbacks[callbackId] = function(data) {
           dom._jsonpCallbacks[callbackId].called = true;
@@ -79,7 +82,6 @@
           script.removeEventListener('load', handler);
           script.removeEventListener('error', handler);
           destroy(script);
-          script = null;
         };
       });
     }
