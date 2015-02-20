@@ -56,6 +56,7 @@
           if(status === 200) {
             observer.onNext({
               status: status,
+              responseType: 'jsonp',
               response: data,
               originalEvent: e
             });
@@ -64,6 +65,7 @@
           }
           else {
             observer.onError({
+              type: 'error',
               status: status,
               originalEvent: e
             });
