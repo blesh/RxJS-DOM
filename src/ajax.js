@@ -123,6 +123,10 @@
 
         if(isXHR2 || isLegacyCORS) {
           xhr.onload = function(e) {
+            if(settings.progressObserver) {
+              settings.progressObserver.onNext(e);
+              settings.progressObserver.onCompleted();
+            }
             observer.onNext(normalizeAjaxLoadEvent(e, xhr));
             observer.onCompleted();
           };
@@ -134,10 +138,16 @@
           }
 
           xhr.onerror = function(e) {
+            if(settings.progressObserver) {
+              settings.progressObserver.onError(e);
+            }
             observer.onError(normalizeAjaxErrorEvent(e, xhr, 'error'));
           };
 
           xhr.onabort = function(e) {
+            if(settings.progressObserver) {
+              settings.progressObserver.onError(e);
+            }
             observer.onError(normalizeAjaxErrorEvent(e, xhr, 'abort'));
           };
         } else {
