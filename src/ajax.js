@@ -22,15 +22,38 @@
     }
   }
 
+  var isWithCredentials = !!('withCredentials' in root.XMLHttpRequest.prototype);
+  var isLegacyCORS = !isWithCredentials && !!root.XDomainRequest;
+  var isXHR2 = !!(new XMLHttpRequest()).upload;
+
   // Get CORS support even for older IE
   function getCORSRequest() {
-    if ('withCredentials' in root.XMLHttpRequest.prototype) {
+    if (isWithCredentials) {
       return new root.XMLHttpRequest();
-    } else if (!!root.XDomainRequest) {
+    } else if (isLegacyCORS) {
       return new XDomainRequest();
     } else {
       throw new Error('CORS is not supported by your browser');
     }
+  }
+
+  function normalizeAjaxLoadEvent(e, xhr) {
+    return {
+      response: ('response' in xhr) ? xhr.response : xhr.responseText,
+      status: xhr.status,
+      responseType: xhr.responseType,
+      xhr: xhr,
+      originalEvent: e
+    };
+  }
+
+  function normalizeAjaxErrorEvent(e, xhr, type) {
+    return {
+      type: type,
+      status: xhr.status,
+      xhr: xhr,
+      originalEvent: e
+    };
   }
 
   /**
@@ -96,31 +119,68 @@
           }
         }
 
-        xhr.onreadystatechange = xhr.onload = function () {
-          // Check if CORS
-          if (settings.crossDomain) {
-            observer.onNext(xhr);
+        if(isXHR2 || isLegacyCORS) {
+          xhr.onload = function(e) {
+            observer.onNext(normalizeAjaxLoadEvent(e, xhr));
             observer.onCompleted();
-            isDone = true;
-            return;
+          };
+
+          if(settings.progressObserver) {
+            xhr.onprogress = function(e) {
+              settings.progressObserver.onNext(e);
+            };
           }
 
-          if (xhr.readyState === 4) {
-            var status = xhr.status;
-            if ((status >= 200 && status <= 300) || status === 0 || status === '') {
-              observer.onNext(xhr);
-              observer.onCompleted();
-            } else {
-              observer.onError(xhr);
+          xhr.onerror = function(e) {
+            observer.onError(normalizeAjaxErrorEvent(e, xhr, 'error'));
+          };
+
+          xhr.onabort = function(e) {
+            observer.onError(normalizeAjaxErrorEvent(e, xhr, 'abort'));
+          };
+        } else {
+          xhr.onreadystatechange = function(e) {
+            if(xhr.readyState === 4) {
+              var status = xhr.status;
+              if ((status >= 200 && status <= 300) || status === 0 || status === '') {
+                observer.onNext(normalizeAjaxLoadEvent(e, xhr));
+                observer.onCompleted();
+              } else {
+                observer.onError(normalizeAjaxErrorEvent(e, xhr, 'error'));
+              }
             }
+          };
+        }
 
-            isDone = true;
+        if(settings.requestType) {
+          try {
+            xhr.requestType = settings.requestType;
+          } catch(e) {
+            // json payloads are always parsed by the client
+            if(xhr.requestType !== 'json') {
+              throw e;
+            }
           }
-        };
+        }
 
-        xhr.onerror = function () {
-          observer.onError(xhr);
-        };
+        if(isXHR2 && settings.uploadObserver) {
+          xhr.upload.onprogress = function(e) {
+            settings.uploadProgressObserver.onNext(e);
+          };
+
+          xhr.upload.onerror = function(e) {
+            settings.uploadObserver.onError(e);
+          };
+
+          xhr.upload.onload = function(e) {
+            settings.uploadObserver.onNext(e);
+            settings.uploadObserver.onCompleted();
+          };
+
+          xhr.upload.onabort = function(e) {
+            settings.uploadObserver.onError(e);
+          };
+        }
         // body is expected as an object
         if ( settings.body && typeof settings.body === 'object') {
           // Add proper header so server can parse it
@@ -133,7 +193,9 @@
       }
 
       return function () {
-        if (!isDone && xhr.readyState !== 4) { xhr.abort(); }
+        if (!isDone && xhr.readyState !== 4) { 
+          xhr.abort(); 
+        }
       };
     });
   };
