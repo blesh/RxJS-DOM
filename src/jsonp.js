@@ -9,6 +9,81 @@
     };
   })();
 
+  dom._jsonpCallbacks = {};
+
+  dom.jsonpRequest = (function(){
+    var id = 0;
+
+    return function(options) {
+      return new AnonymousObservable(function(observer) {
+
+        var settings = {
+          jsonp: 'JSONPCallback',
+          async: true,
+        };
+
+        if(typeof options === 'string') {
+          settings.url = options;
+        } else {
+          for(var prop in options) {
+            if(hasOwnProperty.call(options, prop)) {
+              settings[prop] = options[prop];
+            }
+          }
+        }
+
+        var callbackId = 'callback_' + (id++).toString(36); 
+        var script = document.createElement('script');
+        script.type = 'text/javascript';
+        script.async = settings.async;
+        script.src = settings.url.replace(settings.jsonp, 'Rx.DOM._jsonpCallbacks.' + callbackId);
+
+        dom._jsonpCallbacks[callbackId] = function(data) {
+          dom._jsonpCallbacks[callbackId].called = true;
+          dom._jsonpCallbacks[callbackId].data = data;
+        };
+
+        var handler = function(e) {
+          if(e.type === 'load' && !dom._jsonpCallbacks[callbackId].called) {
+            e = { type: 'error' };
+          }
+          var status = e.type === 'error' ? 400 : 200;
+          var data = dom._jsonpCallbacks[callbackId].data;
+
+          if(status === 200) {
+            observer.onNext({
+              status: status,
+              response: data,
+              originalEvent: e
+            });
+
+            observer.onCompleted();
+          }
+          else {
+            observer.onError({
+              status: status,
+              originalEvent: e
+            });
+          }
+        };
+
+        script.addEventListener('load', handler);
+        script.addEventListener('error', handler);
+
+        var parent = document.body || document.documentElement;
+        parent.appendChild(script);
+
+        return function() {
+          //TODO: angular actually sets this to noop instead of deleting, unsure why.
+          delete dom._jsonpCallbacks[callbackId];
+          script.removeEventListener('load', handler);
+          script.removeEventListener('error', handler);
+          destroy(script);
+          script = null;
+        };
+      });
+    }
+  }());
   /**
    * Creates a cold observable JSONP Request with the specified settings.
    *
@@ -26,58 +101,58 @@
    *
    * @returns {Observable} A cold observable containing the results from the JSONP call.
    */
-  dom.jsonpRequest = (function () {
-    var uniqueId = 0;
-    var defaultCallback = function _defaultCallback(observer, data) {
-      observer.onNext(data);
-      observer.onCompleted();
-    };
+  // dom.jsonpRequest = (function () {
+  //   var uniqueId = 0;
+  //   var defaultCallback = function _defaultCallback(observer, data) {
+  //     observer.onNext(data);
+  //     observer.onCompleted();
+  //   };
 
-    return function (settings) {
-      return new AnonymousObservable(function (observer) {
-        typeof settings === 'string' && (settings = { url: settings });
-        !settings.jsonp && (settings.jsonp = 'JSONPCallback');
+  //   return function (settings) {
+  //     return new AnonymousObservable(function (observer) {
+  //       typeof settings === 'string' && (settings = { url: settings });
+  //       !settings.jsonp && (settings.jsonp = 'JSONPCallback');
 
-        var head = document.getElementsByTagName('head')[0] || document.documentElement,
-          tag = document.createElement('script'),
-          handler = 'rxjscallback' + uniqueId++;
+  //       var head = document.getElementsByTagName('head')[0] || document.documentElement,
+  //         tag = document.createElement('script'),
+  //         handler = 'rxjscallback' + uniqueId++;
 
-        if (typeof settings.jsonpCallback === 'string') {
-          handler = settings.jsonpCallback;
-        }
+  //       if (typeof settings.jsonpCallback === 'string') {
+  //         handler = settings.jsonpCallback;
+  //       }
 
-        settings.url = settings.url.replace('=' + settings.jsonp, '=' + handler);
+  //       settings.url = settings.url.replace('=' + settings.jsonp, '=' + handler);
 
-        var existing = root[handler];
-        root[handler] = function(data, recursed) {
-          if (existing) {
-            existing(data, true) && (existing = null);
-            return false;
-          }
-          defaultCallback(observer, data);
-          !recursed && (root[handler] = null);
-          return true;
-        };
+  //       var existing = root[handler];
+  //       root[handler] = function(data, recursed) {
+  //         if (existing) {
+  //           existing(data, true) && (existing = null);
+  //           return false;
+  //         }
+  //         defaultCallback(observer, data);
+  //         !recursed && (root[handler] = null);
+  //         return true;
+  //       };
 
-        var cleanup = function _cleanup() {
-          tag.onload = tag.onreadystatechange = null;
-          head && tag.parentNode && destroy(tag);
-          tag = undefined;
-        };
+  //       var cleanup = function _cleanup() {
+  //         tag.onload = tag.onreadystatechange = null;
+  //         head && tag.parentNode && destroy(tag);
+  //         tag = undefined;
+  //       };
 
-        tag.src = settings.url;
-        tag.async = true;
-        tag.onload = tag.onreadystatechange = function (_, abort) {
-          if ( abort || !tag.readyState || /loaded|complete/.test(tag.readyState) ) {
-            cleanup();
-          }
-        };
-        head.insertBefore(tag, head.firstChild);
+  //       tag.src = settings.url;
+  //       tag.async = true;
+  //       tag.onload = tag.onreadystatechange = function (_, abort) {
+  //         if ( abort || !tag.readyState || /loaded|complete/.test(tag.readyState) ) {
+  //           cleanup();
+  //         }
+  //       };
+  //       head.insertBefore(tag, head.firstChild);
 
-        return function () {
-          if (!tag) { return; }
-          cleanup();
-        };
-      });
-    };
-  })();
+  //       return function () {
+  //         if (!tag) { return; }
+  //         cleanup();
+  //       };
+  //     });
+  //   };
+  // })();

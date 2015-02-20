@@ -147,6 +147,7 @@
               if ((status >= 200 && status <= 300) || status === 0 || status === '') {
                 observer.onNext(normalizeAjaxLoadEvent(e, xhr));
                 observer.onCompleted();
+                isDone = true;
               } else {
                 observer.onError(normalizeAjaxErrorEvent(e, xhr, 'error'));
               }
@@ -177,6 +178,7 @@
           xhr.upload.onload = function(e) {
             settings.uploadObserver.onNext(e);
             settings.uploadObserver.onCompleted();
+            isDone = true;
           };
 
           xhr.upload.onabort = function(e) {

@@ -269,25 +269,50 @@
     }
   }
 
+  var isWithCredentials = !!('withCredentials' in root.XMLHttpRequest.prototype);
+  var isLegacyCORS = !isWithCredentials && !!root.XDomainRequest;
+  var isXHR2 = !!(new XMLHttpRequest()).upload;
+
   // Get CORS support even for older IE
   function getCORSRequest() {
-    if ('withCredentials' in root.XMLHttpRequest.prototype) {
+    if (isWithCredentials) {
       return new root.XMLHttpRequest();
-    } else if (!!root.XDomainRequest) {
+    } else if (isLegacyCORS) {
       return new XDomainRequest();
     } else {
       throw new Error('CORS is not supported by your browser');
     }
   }
 
+  function normalizeAjaxLoadEvent(e, xhr, settings) {
+    var response = ('response' in xhr) ? xhr.response : 
+      (settings.responseType === 'json' ? JSON.parse(xhr.responseText) : xhr.responseText);
+    return {
+      response: response,
+      status: xhr.status,
+      responseType: xhr.responseType,
+      xhr: xhr,
+      originalEvent: e
+    };
+  }
+
+  function normalizeAjaxErrorEvent(e, xhr, type) {
+    return {
+      type: type,
+      status: xhr.status,
+      xhr: xhr,
+      originalEvent: e
+    };
+  }
+
   /**
-   * Creates an observable for an Ajax request with either a settings object with url, headers, etc or a string for a URL.
+   * Creates an observable for an Ajax request with either a options object with url, headers, etc or a string for a URL.
    *
    * @example
    *   source = Rx.DOM.ajax('/products');
    *   source = Rx.DOM.ajax( url: 'products', method: 'GET' });
    *
-   * @param {Object} settings Can be one of the following:
+   * @param {Object} options Can be one of the following:
    *
    *  A string of the URL to make the Ajax call.
    *  An object with the following properties
@@ -300,11 +325,22 @@
    *
    * @returns {Observable} An observable sequence containing the XMLHttpRequest.
   */
-  var ajaxRequest = dom.ajax = function (settings) {
-    typeof settings === 'string' && (settings = { method: 'GET', url: settings, async: true });
-    settings.method || (settings.method = 'GET');
-    settings.crossDomain === undefined && (settings.crossDomain = false);
-    settings.async === undefined && (settings.async = true);
+  var ajaxRequest = dom.ajax = function (options) {
+    var settings = {
+      method: 'GET',
+      crossDomain: false,
+      async: true
+    };
+
+    if(typeof options === 'string') {
+      settings.url = options;
+    } else {
+      for(var prop in options) {
+        if(hasOwnProperty.call(options, prop)) {
+          settings[prop] = options[prop];
+        }
+      }
+    }
 
     return new AnonymousObservable(function (observer) {
       var isDone = false;
@@ -332,44 +368,87 @@
           }
         }
 
-        xhr.onreadystatechange = xhr.onload = function () {
-          // Check if CORS
-          if (settings.crossDomain) {
-            observer.onNext(xhr);
+        if(isXHR2 || isLegacyCORS) {
+          xhr.onload = function(e) {
+            observer.onNext(normalizeAjaxLoadEvent(e, xhr));
             observer.onCompleted();
-            isDone = true;
-            return;
+          };
+
+          if(settings.progressObserver) {
+            xhr.onprogress = function(e) {
+              settings.progressObserver.onNext(e);
+            };
           }
 
-          if (xhr.readyState === 4) {
-            var status = xhr.status;
-            if ((status >= 200 && status <= 300) || status === 0 || status === '') {
-              observer.onNext(xhr);
-              observer.onCompleted();
-            } else {
-              observer.onError(xhr);
+          xhr.onerror = function(e) {
+            observer.onError(normalizeAjaxErrorEvent(e, xhr, 'error'));
+          };
+
+          xhr.onabort = function(e) {
+            observer.onError(normalizeAjaxErrorEvent(e, xhr, 'abort'));
+          };
+        } else {
+          xhr.onreadystatechange = function(e) {
+            if(xhr.readyState === 4) {
+              var status = xhr.status;
+              if ((status >= 200 && status <= 300) || status === 0 || status === '') {
+                observer.onNext(normalizeAjaxLoadEvent(e, xhr));
+                observer.onCompleted();
+              } else {
+                observer.onError(normalizeAjaxErrorEvent(e, xhr, 'error'));
+              }
             }
-
-            isDone = true;
-          }
-        };
-
-        xhr.onerror = function () {
-          observer.onError(xhr);
-        };
-        // body is expected as an object
-        if ( settings.body && typeof settings.body === 'object') {
-          // Add proper header so server can parse it
-          xhr.setRequestHeader("Content-Type","application/json");
-          settings.body = JSON.stringify(settings.body);
+          };
         }
-        xhr.send(settings.body || null);
+
+        if(settings.responseType) {
+          try {
+            xhr.responseType = settings.responseType;
+          } catch(e) {
+            // json payloads are always parsed by the client
+            if(xhr.responseType !== 'json') {
+              throw e;
+            }
+          }
+        }
+
+        if(isXHR2 && settings.uploadObserver) {
+          xhr.upload.onprogress = function(e) {
+            settings.uploadProgressObserver.onNext(e);
+          };
+
+          xhr.upload.onerror = function(e) {
+            settings.uploadObserver.onError(e);
+          };
+
+          xhr.upload.onload = function(e) {
+            settings.uploadObserver.onNext(e);
+            settings.uploadObserver.onCompleted();
+          };
+
+          xhr.upload.onabort = function(e) {
+            settings.uploadObserver.onError(e);
+          };
+        }
+
+        var body = settings.body;
+
+        // if sending an object, and content type is application/json,
+        // serialize it for the user.
+        if(settings.headers && settings.headers['content-type'] === 'application/json' &&
+            typeof body === 'object') {
+          body = JSON.stringify(body);
+        }
+
+        xhr.send(body);
       } catch (e) {
         observer.onError(e);
       }
 
       return function () {
-        if (!isDone && xhr.readyState !== 4) { xhr.abort(); }
+        if (!isDone && xhr.readyState !== 4) { 
+          xhr.abort(); 
+        }
       };
     });
   };
@@ -422,7 +501,7 @@
   /**
    * Creates a cold observable JSONP Request with the specified settings.
    *
-   * @example 
+   * @example
    *   source = Rx.DOM.jsonpRequest('http://www.bing.com/?q=foo&JSONPRequest=?');
    *   source = Rx.DOM.jsonpRequest( url: 'http://bing.com/?q=foo', jsonp: 'JSONPRequest' });
    *
@@ -451,28 +530,28 @@
         var head = document.getElementsByTagName('head')[0] || document.documentElement,
           tag = document.createElement('script'),
           handler = 'rxjscallback' + uniqueId++;
-          
-        var prevFn;
+
         if (typeof settings.jsonpCallback === 'string') {
           handler = settings.jsonpCallback;
-          prevFn = root[handler];
         }
 
         settings.url = settings.url.replace('=' + settings.jsonp, '=' + handler);
 
-        root[handler] = function(data) {
-          if (prevFn && typeof prevFn === 'function') {
-            prevFn(observer, data);
-          } else {
-            defaultCallback(observer, data);
+        var existing = root[handler];
+        root[handler] = function(data, recursed) {
+          if (existing) {
+            existing(data, true) && (existing = null);
+            return false;
           }
+          defaultCallback(observer, data);
+          !recursed && (root[handler] = null);
+          return true;
         };
 
         var cleanup = function _cleanup() {
           tag.onload = tag.onreadystatechange = null;
           head && tag.parentNode && destroy(tag);
           tag = undefined;
-          root[handler] = prevFn;
         };
 
         tag.src = settings.url;
@@ -481,7 +560,7 @@
           if ( abort || !tag.readyState || /loaded|complete/.test(tag.readyState) ) {
             cleanup();
           }
-        };  
+        };
         head.insertBefore(tag, head.firstChild);
 
         return function () {
@@ -491,6 +570,7 @@
       });
     };
   })();
+
    /**
    * Creates a WebSocket Subject with a given URL, protocol and an optional observer for the open event.
    *
