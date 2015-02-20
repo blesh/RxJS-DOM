@@ -37,9 +37,11 @@
     }
   }
 
-  function normalizeAjaxLoadEvent(e, xhr) {
+  function normalizeAjaxLoadEvent(e, xhr, settings) {
+    var response = ('response' in xhr) ? xhr.response : 
+      (settings.responseType === 'json' ? JSON.parse(xhr.responseText) : xhr.responseText);
     return {
-      response: ('response' in xhr) ? xhr.response : xhr.responseText,
+      response: response,
       status: xhr.status,
       responseType: xhr.responseType,
       xhr: xhr,
@@ -152,12 +154,12 @@
           };
         }
 
-        if(settings.requestType) {
+        if(settings.responseType) {
           try {
-            xhr.requestType = settings.requestType;
+            xhr.responseType = settings.responseType;
           } catch(e) {
             // json payloads are always parsed by the client
-            if(xhr.requestType !== 'json') {
+            if(xhr.responseType !== 'json') {
               throw e;
             }
           }
@@ -181,13 +183,17 @@
             settings.uploadObserver.onError(e);
           };
         }
-        // body is expected as an object
-        if ( settings.body && typeof settings.body === 'object') {
-          // Add proper header so server can parse it
-          xhr.setRequestHeader("Content-Type","application/json");
-          settings.body = JSON.stringify(settings.body);
+
+        var body = settings.body;
+
+        // if sending an object, and content type is application/json,
+        // serialize it for the user.
+        if(settings.headers && settings.headers['content-type'] === 'application/json' &&
+            typeof body === 'object') {
+          body = JSON.stringify(body);
         }
-        xhr.send(settings.body || null);
+
+        xhr.send(body);
       } catch (e) {
         observer.onError(e);
       }
