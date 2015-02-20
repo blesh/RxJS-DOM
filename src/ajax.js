@@ -34,13 +34,13 @@
   }
 
   /**
-   * Creates an observable for an Ajax request with either a settings object with url, headers, etc or a string for a URL.
+   * Creates an observable for an Ajax request with either a options object with url, headers, etc or a string for a URL.
    *
    * @example
    *   source = Rx.DOM.ajax('/products');
    *   source = Rx.DOM.ajax( url: 'products', method: 'GET' });
    *
-   * @param {Object} settings Can be one of the following:
+   * @param {Object} options Can be one of the following:
    *
    *  A string of the URL to make the Ajax call.
    *  An object with the following properties
@@ -53,11 +53,22 @@
    *
    * @returns {Observable} An observable sequence containing the XMLHttpRequest.
   */
-  var ajaxRequest = dom.ajax = function (settings) {
-    typeof settings === 'string' && (settings = { method: 'GET', url: settings, async: true });
-    settings.method || (settings.method = 'GET');
-    settings.crossDomain === undefined && (settings.crossDomain = false);
-    settings.async === undefined && (settings.async = true);
+  var ajaxRequest = dom.ajax = function (options) {
+    var settings = {
+      method: 'GET',
+      crossDomain: false,
+      async: true
+    };
+
+    if(typeof options === 'string') {
+      settings.url = options;
+    } else {
+      for(var prop in options) {
+        if(hasOwnProperty.call(options, prop)) {
+          settings[prop] = options[prop];
+        }
+      }
+    }
 
     return new AnonymousObservable(function (observer) {
       var isDone = false;
